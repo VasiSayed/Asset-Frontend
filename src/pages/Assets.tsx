@@ -102,12 +102,11 @@ const Assets = () => {
     }
   }
 
-  // initial fetch (only when token ready + Assets tab)
   useEffect(() => {
     if (!tokenReady) return;
     if (activeTab !== "Assets") return;
     fetchAssets(filters);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [tokenReady, activeTab]);
 
   const handleTabChange = (key: string | number) => {
@@ -122,9 +121,8 @@ const Assets = () => {
   return (
     <div
       style={{ fontFamily: "'PT Sans', sans-serif", color: "gray" }}
-      className="min-h-screen w-screen px-4 md:px-8 py-6"
+      className="min-h-screen w-full px-6 py-6"
     >
-      
       <Tabs
         tabs={tabItems}
         activeTab={activeTab}

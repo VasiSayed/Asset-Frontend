@@ -1,15 +1,19 @@
 import React from "react";
 import { Bell, Settings, User } from "lucide-react";
+import LogoutButton from "../components/LogoutButton"; // ✅ import logout
 
 const Navbar: React.FC = () => {
   return (
-    <div className="w-full fixed top-0 left-0 z-50">
+    <div className="fixed top-0 left-0 w-screen z-50">
       <div
-        className="relative bg-gradient-to-r from-blue-700 to-blue-800 px-8 py-4 flex items-center justify-between shadow-lg max-w-full"
+        className="relative flex items-center justify-between shadow-lg"
         style={{
-          clipPath: "polygon(2% 0%, 98% 0%, 96% 100%, 4% 100%)",
+          backgroundColor: "#0A2E6D", // Solid dark royal blue
+          clipPath: "polygon(1.5% 0%, 98.5% 0%, 97% 100%, 3% 100%)",
+          padding: "1rem 2.5rem",
         }}
       >
+        {/* Left side - Profile and Title */}
         <div className="flex items-center gap-4">
           <div className="w-11 h-11 rounded-full bg-white flex items-center justify-center overflow-hidden border border-white shadow-sm">
             <User className="w-6 h-6 text-blue-700" />
@@ -20,14 +24,16 @@ const Navbar: React.FC = () => {
           </h1>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button className="p-2.5 hover:bg-blue-700/40 rounded-full transition-all duration-200 hover:scale-105">
+        <div className="flex items-center gap-4">
+          <button className="p-2.5 hover:bg-white/10 rounded-full transition-all duration-200 hover:scale-105">
             <Bell className="w-5 h-5 text-white" />
           </button>
 
-          <button className="p-2.5 hover:bg-blue-700/40 rounded-full transition-all duration-200 hover:scale-105">
+          <button className="p-2.5 hover:bg-white/10 rounded-full transition-all duration-200 hover:scale-105">
             <Settings className="w-5 h-5 text-white" />
           </button>
+
+          <LogoutButton />
         </div>
       </div>
     </div>

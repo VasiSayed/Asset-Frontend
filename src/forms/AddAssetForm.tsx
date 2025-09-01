@@ -13,6 +13,7 @@ import { FaTrash } from "react-icons/fa";
 import Tabs from "../components/Tabs";
 
 import {
+  AutofillAsset ,
   createBulkAsset,
   GetAssetTypes,
   GetAssetCategories,
@@ -33,7 +34,6 @@ interface AddAssetFormProps {
   onClose?: () => void;
 }
 
-// ✅ keep only these simple placeholder lists (others are dynamic via state)
 const vendorOptions = ["Vendor 1", "Vendor 2"];
 const poOptions = ["PO 1", "PO 2"];
 const specialOptions = ["Manual", "Choose"];
@@ -41,7 +41,6 @@ const specialOptions = ["Manual", "Choose"];
 const departmentOptions = ["Department 1", "Department 2"];
 const unitTypeOptions = ["Unit 1", "Unit 2"];
 
-// ✅ NEW: backend needs site_id when using building/floor/unit
 const SITE_ID = 1;
 
 type RadioOption = { label: string; value: string };
@@ -65,6 +64,16 @@ type FileState = {
   other: FileList | null;
 };
 
+type AutoCandidate = {
+  brand: string;
+  model: string;
+  capacity_value: string;
+  capacity_unit: string;
+  purchase_cost: string;
+  currency?: string;
+  url?: string;
+};
+
 const AddAssetForm: React.FC<AddAssetFormProps> = ({
   initialData,
   onClose,
@@ -79,7 +88,9 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
   const [buildingOptions, setBuildingOptions] = useState<string[]>([]);
   const [floorOptions, setFloorOptions] = useState<string[]>([]);
   const [unitOptions, setUnitOptions] = useState<string[]>([]);
-
+  const [afOpen, setAfOpen] = useState(false);
+  const [afLoading, setAfLoading] = useState(false);
+  const [afResults, setAfResults] = useState<AutoCandidate[]>([]);
   const [form, setForm] = useState({
     building: "",
     floor: "",
@@ -171,15 +182,66 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
   const emptyToNull = (v: string) => (v?.trim() ? v : null);
   const numOrNull = (v: string) => (v?.trim() ? Number(v) : null);
 
+  // ✅ only accept "id - name" pattern; avoids grabbing numbers from names
   const labelToId = (v: string): number | null => {
     if (!v) return null;
-    const m = v.match(/\d+/);
-    return m ? Number(m[0]) : null;
+    const m = v.match(/^(\d+)\s*-/);
+    return m ? Number(m[1]) : null;
   };
   const mustId = (label: string, fieldLabel: string): number => {
     const id = labelToId(label);
     if (!id) throw new Error(`${fieldLabel} is required`);
     return id;
+  };
+
+  // Open modal + fetch suggestions using the asset name
+  const handleAutoFillSearch = async () => {
+    const q = form.assetName.trim();
+    if (q.length < 3) {
+      showToast("Type at least 3 characters in Asset Name.", "error");
+      return;
+    }
+    try {
+      setAfOpen(true);
+      setAfLoading(true);
+      const data = await AutofillAsset(q);
+      setAfResults(data?.candidates || []);
+      if (!data?.candidates?.length) {
+        showToast(
+          "No matches found. Try a more specific name or model.",
+          "error"
+        );
+      }
+    } catch (err: any) {
+      showToast(
+        `Auto-fill failed: ${
+          err?.response?.data?.detail || err?.message || "Request failed"
+        }`,
+        "error"
+      );
+    } finally {
+      setAfLoading(false);
+    }
+  };
+
+  // Apply a chosen candidate to form fields (don’t auto-save)
+  const applyCandidate = (c: AutoCandidate) => {
+    setForm((prev) => ({
+      ...prev,
+      // keep user-entered Asset Name; only fill Brand/Model/Capacity fields
+      brand: c.brand || prev.brand,
+      model: c.model || prev.model,
+      capacity: c.capacity_value || prev.capacity,
+      capacityUnit: c.capacity_unit || prev.capacityUnit,
+    }));
+
+    // fill purchase cost only if we found any (don’t override user entry)
+    if (!purchase.cost && c.purchase_cost) {
+      setPurchase((p) => ({ ...p, cost: c.purchase_cost }));
+    }
+
+    setAfOpen(false);
+    showToast("Pre-filled from web. Review & edit if needed.", "success");
   };
 
   // ------------------ useEffects ------------------
@@ -196,55 +258,67 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
   }, []);
 
   useEffect(() => {
-    if (form.assetType) {
-      (async () => {
-        try {
-          const id = labelToId(form.assetType);
-          const data = await GetAssetCategories(id!);
-          setCategoryOptions(data.map((c: any) => `${c.id} - ${c.name}`));
-        } catch {
-          showToast("❌ Failed to load Categories", "error");
-        }
-      })();
-    } else {
+    if (!form.assetType) {
       setCategoryOptions([]);
+      setForm((p) => ({ ...p, category: "", group: "", subGroup: "" }));
+      return;
     }
+    (async () => {
+      try {
+        const id = labelToId(form.assetType)!;
+        const data = await GetAssetCategories(id);
+        setCategoryOptions(data.map((c: any) => `${c.id} - ${c.name}`));
+        // clear downstream
+        setForm((p) => ({
+          ...p,
+          category: p.category,
+          group: "",
+          subGroup: "",
+        }));
+      } catch {
+        showToast("❌ Failed to load Categories", "error");
+      }
+    })();
   }, [form.assetType]);
 
   useEffect(() => {
-    if (form.category) {
-      (async () => {
-        try {
-          const id = labelToId(form.category);
-          const data = await GetAssetGroups(id!);
-          setGroupOptions(data.map((g: any) => `${g.id} - ${g.name}`));
-        } catch {
-          showToast("❌ Failed to load Groups", "error");
-        }
-      })();
-    } else {
+    if (!form.category) {
       setGroupOptions([]);
+      setForm((p) => ({ ...p, group: "", subGroup: "" }));
+      return;
     }
+    (async () => {
+      try {
+        const id = labelToId(form.category)!;
+        const data = await GetAssetGroups(id);
+        setGroupOptions(data.map((g: any) => `${g.id} - ${g.name}`));
+        setForm((p) => ({ ...p, group: p.group, subGroup: "" }));
+      } catch {
+        showToast("❌ Failed to load Groups", "error");
+      }
+    })();
   }, [form.category]);
 
   useEffect(() => {
-    if (form.group) {
-      (async () => {
-        try {
-          const id = labelToId(form.group);
-          const data = await GetAssetSubgroups(id!);
-          setSubGroupOptions(data.map((sg: any) => `${sg.name}`));
-          
-        } catch {
-          showToast("❌ Failed to load Subgroups", "error");
-        }
-      })();
-    } else {
+    // clear subgroup first to avoid stale id
+    setForm((p) => ({ ...p, subGroup: "" }));
+    if (!form.group) {
       setSubGroupOptions([]);
+      return;
     }
+    (async () => {
+      try {
+        const id = labelToId(form.group)!;
+        const data = await GetAssetSubgroups(id);
+        // ✅ include id so backend gets a valid pk
+        setSubGroupOptions(data.map((sg: any) => `${sg.id} - ${sg.name}`));
+      } catch {
+        showToast("❌ Failed to load Subgroups", "error");
+      }
+    })();
   }, [form.group]);
 
-  // Optional: allow "Choose" to fetch GlobalLocation list (kept logic, UI unchanged)
+  // Optional: allow "Choose" to fetch GlobalLocation list
   useEffect(() => {
     if (form.building === "Choose") {
       (async () => {
@@ -273,7 +347,6 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     })();
   }, []);
 
-  // load floors when building selected
   useEffect(() => {
     if (form.building) {
       (async () => {
@@ -288,7 +361,6 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     } else setFloorOptions([]);
   }, [form.building]);
 
-  // load units when floor selected
   useEffect(() => {
     if (form.floor) {
       (async () => {
@@ -375,7 +447,6 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     e.stopPropagation();
   };
 
-  // ✅ add location validation so we don't submit incomplete location
   const validateForm = () => {
     if (!form.assetName.trim()) return "Asset Name is required";
     if (!labelToId(form.assetType)) return "Asset Type is required";
@@ -400,7 +471,6 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     return null;
   };
 
-  // ---------- submit ----------
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errorMsg = validateForm();
@@ -429,9 +499,7 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
       const departmentName = form.department.trim();
 
       const Asset = {
-        // ✅ include site_id to satisfy backend location requirement
         site_id: SITE_ID,
-
         building_id: labelToId(form.building),
         floor_id: labelToId(form.floor),
         unit_id: labelToId(form.unit),
@@ -537,7 +605,7 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
       if (AssetMeasure) payload.AssetMeasure = AssetMeasure;
       if (AssetAttachment.length) payload.AssetAttachment = AssetAttachment;
 
-      const resp = await createBulkAsset(payload);
+      await createBulkAsset(payload);
       showToast("Asset created successfully.", "success");
       navigate("/assetmanagement");
       onClose?.();
@@ -567,105 +635,129 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     {
       title: "Asset Info",
       content: (
-        <div
-          className="bg-white p-4"
-          style={{ fontFamily: "'PT Sans', sans-serif" }}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <TextInput
-              label="Asset Name"
-              name="assetName"
-              value={form.assetName}
-              onChange={handleChange}
-            />
-            <TextInput
-              label="Brand"
-              name="brand"
-              value={form.brand}
-              onChange={handleChange}
-            />
-            <TextInput
-              label="Model"
-              name="model"
-              value={form.model}
-              onChange={handleChange}
-            />
-            <TextInput
-              label="Serial Number"
-              name="serial"
-              value={form.serial}
-              onChange={handleChange}
-            />
-            <Select
-              label="Asset Type"
-              name="assetType"
-              options={assetTypeOptions}
-              value={form.assetType}
-              onChange={handleChange}
-            />
-            <Select
-              label="Category"
-              name="category"
-              options={categoryOptions}
-              value={form.category}
-              onChange={handleChange}
-            />
-            <Select
-              label="Group"
-              name="group"
-              options={groupOptions}
-              value={form.group}
-              onChange={handleChange}
-            />
-            <Select
-              label="Sub Group"
-              name="subGroup"
-              options={subGroupOptions}
-              value={form.subGroup}
-              onChange={handleChange}
-            />
-            <TextInput
-              label="Capacity"
-              name="capacity"
-              value={form.capacity}
-              onChange={handleChange}
-            />
-            <TextInput
-              label="Capacity Unit"
-              name="capacityUnit"
-              value={form.capacityUnit}
-              onChange={handleChange}
-            />
-            <Select
-              label="Department"
-              name="department"
-              options={departmentOptions}
-              value={form.department}
-              onChange={handleChange}
-            />
-            <RadioButton
-              label="Critical Asset"
-              name="critical"
-              options={yesNoOptions}
-              value={form.critical}
-              onChange={({ target }) => handleRadio("critical", target.value)}
-            />
-            <RadioButton
-              label="Asset Reading"
-              name="assetReading"
-              options={yesNoOptions}
-              value={form.assetReading}
-              onChange={({ target }) =>
-                handleRadio("assetReading", target.value)
-              }
-            />
-            <RadioButton
-              label="Compliance"
-              name="compliance"
-              options={yesNoOptions}
-              value={form.compliance}
-              onChange={({ target }) => handleRadio("compliance", target.value)}
-            />
+        <div style={{ fontFamily: "'PT Sans', sans-serif" }}>
+          <div className="bg-gray-200 text-center py-3 rounded mb-4">
+            <h3 className="text-xl font-bold text-gray-800">Asset Info</h3>
+          </div>
+          <div className="bg-white p-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* <TextInput
+                label="Asset Name"
+                name="assetName"
+                value={form.assetName}
+                onChange={handleChange}
+              /> */}
+              {/* Asset Name with Auto-fill button */}
+              <div className="flex items-end gap-2 col-span-1">
+                <div className="flex-1">
+                  <TextInput
+                    label="Asset Name"
+                    name="assetName"
+                    value={form.assetName}
+                    onChange={handleChange}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAutoFillSearch}
+                  className="h-10 mb-1 px-3 rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                  title="Find brand/model/specs from the web"
+                >
+                  Auto-fill
+                </button>
+              </div>
+
+              <TextInput
+                label="Brand"
+                name="brand"
+                value={form.brand}
+                onChange={handleChange}
+              />
+              <TextInput
+                label="Model"
+                name="model"
+                value={form.model}
+                onChange={handleChange}
+              />
+              <TextInput
+                label="Serial Number"
+                name="serial"
+                value={form.serial}
+                onChange={handleChange}
+              />
+              <Select
+                label="Asset Type"
+                name="assetType"
+                options={assetTypeOptions}
+                value={form.assetType}
+                onChange={handleChange}
+              />
+              <Select
+                label="Category"
+                name="category"
+                options={categoryOptions}
+                value={form.category}
+                onChange={handleChange}
+              />
+              <Select
+                label="Group"
+                name="group"
+                options={groupOptions}
+                value={form.group}
+                onChange={handleChange}
+              />
+              <Select
+                label="Sub Group"
+                name="subGroup"
+                options={subGroupOptions}
+                value={form.subGroup}
+                onChange={handleChange}
+              />
+              <TextInput
+                label="Capacity"
+                name="capacity"
+                value={form.capacity}
+                onChange={handleChange}
+              />
+              <TextInput
+                label="Capacity Unit"
+                name="capacityUnit"
+                value={form.capacityUnit}
+                onChange={handleChange}
+              />
+              <Select
+                label="Department"
+                name="department"
+                options={departmentOptions}
+                value={form.department}
+                onChange={handleChange}
+              />
+              <RadioButton
+                label="Critical Asset"
+                name="critical"
+                options={yesNoOptions}
+                value={form.critical}
+                onChange={({ target }) => handleRadio("critical", target.value)}
+              />
+              <RadioButton
+                label="Asset Reading"
+                name="assetReading"
+                options={yesNoOptions}
+                value={form.assetReading}
+                onChange={({ target }) =>
+                  handleRadio("assetReading", target.value)
+                }
+              />
+              <RadioButton
+                label="Compliance"
+                name="compliance"
+                options={yesNoOptions}
+                value={form.compliance}
+                onChange={({ target }) =>
+                  handleRadio("compliance", target.value)
+                }
+              />
+            </div>
           </div>
         </div>
       ),
@@ -673,60 +765,64 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     {
       title: "Purchase Information",
       content: (
-        <div
-          className="bg-white p-4"
-          style={{ fontFamily: "'PT Sans', sans-serif" }}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <TextInput
-              label="Purchase Cost"
-              name="cost"
-              value={purchase.cost}
-              onChange={(e) =>
-                setPurchase({ ...purchase, cost: e.target.value })
-              }
-            />
-            <TextInput
-              label="PO Number"
-              name="poNumber"
-              value={purchase.poNumber}
-              onChange={(e) =>
-                setPurchase({ ...purchase, poNumber: e.target.value })
-              }
-            />
-            <DatePicker
-              label="Purchase Date"
-              name="purchaseDate"
-              value={purchase.purchaseDate}
-              onChange={(e) =>
-                setPurchase({ ...purchase, purchaseDate: e.target.value })
-              }
-            />
-            <TextInput
-              label="End of Life"
-              name="endOfLife"
-              value={purchase.endOfLife}
-              onChange={(e) =>
-                setPurchase({ ...purchase, endOfLife: e.target.value })
-              }
-            />
-            <div className="col-span-2">
+        <div style={{ fontFamily: "'PT Sans', sans-serif" }}>
+          <div className="bg-gray-200 text-center py-3 rounded mb-4">
+            <h3 className="text-xl font-bold text-gray-800">
+              Purchase Information
+            </h3>
+          </div>
+          <div className="bg-white p-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <TextInput
-                label="Vendor Name"
-                name="vendorName"
-                value={purchase.vendorName}
+                label="Purchase Cost"
+                name="cost"
+                value={purchase.cost}
                 onChange={(e) =>
-                  setPurchase({ ...purchase, vendorName: e.target.value })
+                  setPurchase({ ...purchase, cost: e.target.value })
                 }
               />
-            </div>
-            <div className="col-span-2 flex items-end">
-              <button
-                type="button"
-                className="bg-blue-400 text-white px-4 py-2 rounded"
-              >
-                Add Vendor
-              </button>
+              <TextInput
+                label="PO Number"
+                name="poNumber"
+                value={purchase.poNumber}
+                onChange={(e) =>
+                  setPurchase({ ...purchase, poNumber: e.target.value })
+                }
+              />
+              <DatePicker
+                label="Purchase Date"
+                name="purchaseDate"
+                value={purchase.purchaseDate}
+                onChange={(e) =>
+                  setPurchase({ ...purchase, purchaseDate: e.target.value })
+                }
+              />
+              <TextInput
+                label="End of Life"
+                name="endOfLife"
+                value={purchase.endOfLife}
+                onChange={(e) =>
+                  setPurchase({ ...purchase, endOfLife: e.target.value })
+                }
+              />
+              <div className="col-span-2">
+                <TextInput
+                  label="Vendor Name"
+                  name="vendorName"
+                  value={purchase.vendorName}
+                  onChange={(e) =>
+                    setPurchase({ ...purchase, vendorName: e.target.value })
+                  }
+                />
+              </div>
+              <div className="col-span-2 flex items-end">
+                <button
+                  type="button"
+                  className="bg-blue-400 text-white px-4 py-2 rounded"
+                >
+                  Add Vendor
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -735,76 +831,80 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     {
       title: "AMC Warranty Information",
       content: (
-        <div
-          className="bg-white p-4"
-          style={{ fontFamily: "'PT Sans', sans-serif" }}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <TextInput
-              label="Warranty Type"
-              name="warrantyType"
-              value={warranty.warrantyType}
-              onChange={(e) =>
-                setWarranty({ ...warranty, warrantyType: e.target.value })
-              }
-            />
-            <DatePicker
-              label="Warranty Start Date"
-              name="warrantyStart"
-              value={warranty.warrantyStart}
-              onChange={(e) =>
-                setWarranty({ ...warranty, warrantyStart: e.target.value })
-              }
-            />
-            <DatePicker
-              label="Warranty End Date"
-              name="warrantyEnd"
-              value={warranty.warrantyEnd}
-              onChange={(e) =>
-                setWarranty({ ...warranty, warrantyEnd: e.target.value })
-              }
-            />
-            <RadioButton
-              label="Under Warranty"
-              name="underWarranty"
-              options={yesNoOptions}
-              value={warranty.underWarranty}
-              onChange={({ target }) =>
-                setWarranty({ ...warranty, underWarranty: target.value })
-              }
-            />
-            <TextInput
-              label="AMC Type"
-              name="amcType"
-              value={warranty.amcType}
-              onChange={(e) =>
-                setWarranty({ ...warranty, amcType: e.target.value })
-              }
-            />
-            <DatePicker
-              label="AMC Start Date"
-              name="amcStart"
-              value={warranty.amcStart}
-              onChange={(e) =>
-                setWarranty({ ...warranty, amcStart: e.target.value })
-              }
-            />
-            <DatePicker
-              label="AMC End Date"
-              name="amcEnd"
-              value={warranty.amcEnd}
-              onChange={(e) =>
-                setWarranty({ ...warranty, amcEnd: e.target.value })
-              }
-            />
-            <TextInput
-              label="AMC Provider Company Name"
-              name="amcProvider"
-              value={warranty.amcProvider}
-              onChange={(e) =>
-                setWarranty({ ...warranty, amcProvider: e.target.value })
-              }
-            />
+        <div style={{ fontFamily: "'PT Sans', sans-serif" }}>
+          <div className="bg-gray-200 text-center py-3 rounded mb-4">
+            <h3 className="text-xl font-bold text-gray-800">
+              AMC Warranty Information
+            </h3>
+          </div>
+          <div className="bg-white p-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <TextInput
+                label="Warranty Type"
+                name="warrantyType"
+                value={warranty.warrantyType}
+                onChange={(e) =>
+                  setWarranty({ ...warranty, warrantyType: e.target.value })
+                }
+              />
+              <DatePicker
+                label="Warranty Start Date"
+                name="warrantyStart"
+                value={warranty.warrantyStart}
+                onChange={(e) =>
+                  setWarranty({ ...warranty, warrantyStart: e.target.value })
+                }
+              />
+              <DatePicker
+                label="Warranty End Date"
+                name="warrantyEnd"
+                value={warranty.warrantyEnd}
+                onChange={(e) =>
+                  setWarranty({ ...warranty, warrantyEnd: e.target.value })
+                }
+              />
+              <RadioButton
+                label="Under Warranty"
+                name="underWarranty"
+                options={yesNoOptions}
+                value={warranty.underWarranty}
+                onChange={({ target }) =>
+                  setWarranty({ ...warranty, underWarranty: target.value })
+                }
+              />
+              <TextInput
+                label="AMC Type"
+                name="amcType"
+                value={warranty.amcType}
+                onChange={(e) =>
+                  setWarranty({ ...warranty, amcType: e.target.value })
+                }
+              />
+              <DatePicker
+                label="AMC Start Date"
+                name="amcStart"
+                value={warranty.amcStart}
+                onChange={(e) =>
+                  setWarranty({ ...warranty, amcStart: e.target.value })
+                }
+              />
+              <DatePicker
+                label="AMC End Date"
+                name="amcEnd"
+                value={warranty.amcEnd}
+                onChange={(e) =>
+                  setWarranty({ ...warranty, amcEnd: e.target.value })
+                }
+              />
+              <TextInput
+                label="AMC Provider Company Name"
+                name="amcProvider"
+                value={warranty.amcProvider}
+                onChange={(e) =>
+                  setWarranty({ ...warranty, amcProvider: e.target.value })
+                }
+              />
+            </div>
           </div>
         </div>
       ),
@@ -812,287 +912,279 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     {
       title: "Maintenance Information",
       content: (
-        <div
-          className="bg-white p-4"
-          style={{ fontFamily: "'PT Sans', sans-serif" }}
-        >
-          <div className="mb-4">
-            <div className="font-semibold mb-2">Consumption Asset Measure:</div>
-            {consumptionMeasures.map((row, idx) => (
-              <div
-                key={idx}
-                className="grid grid-cols-9 gap-2 items-center mb-2"
-              >
-                <TextInput
-                  label="Name"
-                  name="name"
-                  value={row.name as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "consumption",
-                      idx,
-                      "name",
-                      e.target.value
-                    )
-                  }
-                />
-                <Select
-                  label="Select Unit:"
-                  name="unit"
-                  options={unitOptions}
-                  value={row.unitType as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "consumption",
-                      idx,
-                      "unitType",
-                      e.target.value
-                    )
-                  }
-                />
-                {/* <Select
-                  label="Unit Type"
-                  name="unitType"
-                  options={unitTypeOptions}
-                  value={row.unitType as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "consumption",
-                      idx,
-                      "unitType",
-                      e.target.value
-                    )
-                  }
-                /> */}
-                <TextInput
-                  label="Min"
-                  name="min"
-                  value={row.min as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "consumption",
-                      idx,
-                      "min",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Max"
-                  name="max"
-                  value={row.max as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "consumption",
-                      idx,
-                      "max",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Alert Below Value"
-                  name="alertBelow"
-                  value={row.alertBelow as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "consumption",
-                      idx,
-                      "alertBelow",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Alert Above Value"
-                  name="alertAbove"
-                  value={row.alertAbove as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "consumption",
-                      idx,
-                      "alertAbove",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Multiplier Factor"
-                  name="multiplier"
-                  value={row.multiplier as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "consumption",
-                      idx,
-                      "multiplier",
-                      e.target.value
-                    )
-                  }
-                />
-                <div className="flex items-center justify-center">
-                  <input
-                    type="checkbox"
-                    checked={row.checkPrevious as boolean}
+        <div style={{ fontFamily: "'PT Sans', sans-serif" }}>
+          <div className="bg-gray-200 text-center py-3 rounded mb-4">
+            <h3 className="text-xl font-bold text-gray-800">
+              Maintenance Information
+            </h3>
+          </div>
+          <div className="bg-white p-4">
+            <div className="mb-4">
+              <div className="font-semibold mb-2">
+                Consumption Asset Measure:
+              </div>
+              {consumptionMeasures.map((row, idx) => (
+                <div
+                  key={idx}
+                  className="grid grid-cols-9 gap-2 items-center mb-2"
+                >
+                  <TextInput
+                    label="Name"
+                    name="name"
+                    value={row.name as string}
                     onChange={(e) =>
                       handleMeasureChange(
                         "consumption",
                         idx,
-                        "checkPrevious",
-                        e.target.checked
+                        "name",
+                        e.target.value
                       )
                     }
                   />
-                  <span className="ml-1 text-xs">Check Previous Reading</span>
+                  <Select
+                    label="Select Unit:"
+                    name="unit"
+                    options={unitOptions}
+                    value={row.unitType as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "consumption",
+                        idx,
+                        "unitType",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Min"
+                    name="min"
+                    value={row.min as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "consumption",
+                        idx,
+                        "min",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Max"
+                    name="max"
+                    value={row.max as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "consumption",
+                        idx,
+                        "max",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Alert Below Value"
+                    name="alertBelow"
+                    value={row.alertBelow as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "consumption",
+                        idx,
+                        "alertBelow",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Alert Above Value"
+                    name="alertAbove"
+                    value={row.alertAbove as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "consumption",
+                        idx,
+                        "alertAbove",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Multiplier Factor"
+                    name="multiplier"
+                    value={row.multiplier as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "consumption",
+                        idx,
+                        "multiplier",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <div className="flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={row.checkPrevious as boolean}
+                      onChange={(e) =>
+                        handleMeasureChange(
+                          "consumption",
+                          idx,
+                          "checkPrevious",
+                          e.target.checked
+                        )
+                      }
+                    />
+                    <span className="ml-1 text-xs">Check Previous Reading</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeMeasureRow("consumption", idx)}
+                    className="text-red-500 text-lg"
+                  >
+                    <FaTrash />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => removeMeasureRow("consumption", idx)}
-                  className="text-red-500 text-lg"
-                >
-                  <FaTrash />
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => addMeasureRow("consumption")}
-              className="text-blue-500 text-xl"
-            >
-              ＋
-            </button>
-          </div>
-          <div>
-            <div className="font-semibold mb-2">
-              Non Consumption Asset Measure:
-            </div>
-            {nonConsumptionMeasures.map((row, idx) => (
-              <div
-                key={idx}
-                className="grid grid-cols-9 gap-2 items-center mb-2"
+              ))}
+              <button
+                type="button"
+                onClick={() => addMeasureRow("consumption")}
+                className="text-blue-500 text-xl"
               >
-                <TextInput
-                  label="Name"
-                  name="name"
-                  value={row.name as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "nonConsumption",
-                      idx,
-                      "name",
-                      e.target.value
-                    )
-                  }
-                />
-                <Select
-                  label="Unit Type"
-                  name="unitType"
-                  options={unitTypeOptions}
-                  value={row.unitType as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "nonConsumption",
-                      idx,
-                      "unitType",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Min"
-                  name="min"
-                  value={row.min as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "nonConsumption",
-                      idx,
-                      "min",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Max"
-                  name="max"
-                  value={row.max as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "nonConsumption",
-                      idx,
-                      "max",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Alert Below Value"
-                  name="alertBelow"
-                  value={row.alertBelow as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "nonConsumption",
-                      idx,
-                      "alertBelow",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Alert Above Value"
-                  name="alertAbove"
-                  value={row.alertAbove as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "nonConsumption",
-                      idx,
-                      "alertAbove",
-                      e.target.value
-                    )
-                  }
-                />
-                <TextInput
-                  label="Multiplier Factor"
-                  name="multiplier"
-                  value={row.multiplier as string}
-                  onChange={(e) =>
-                    handleMeasureChange(
-                      "nonConsumption",
-                      idx,
-                      "multiplier",
-                      e.target.value
-                    )
-                  }
-                />
-                <div className="flex items-center justify-center">
-                  <input
-                    type="checkbox"
-                    checked={row.checkPrevious as boolean}
+                ＋
+              </button>
+            </div>
+            <div>
+              <div className="font-semibold mb-2">
+                Non Consumption Asset Measure:
+              </div>
+              {nonConsumptionMeasures.map((row, idx) => (
+                <div
+                  key={idx}
+                  className="grid grid-cols-9 gap-2 items-center mb-2"
+                >
+                  <TextInput
+                    label="Name"
+                    name="name"
+                    value={row.name as string}
                     onChange={(e) =>
                       handleMeasureChange(
                         "nonConsumption",
                         idx,
-                        "checkPrevious",
-                        e.target.checked
+                        "name",
+                        e.target.value
                       )
                     }
                   />
-                  <span className="ml-1 text-xs">Check Previous Reading</span>
+                  <Select
+                    label="Unit Type"
+                    name="unitType"
+                    options={unitTypeOptions}
+                    value={row.unitType as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "nonConsumption",
+                        idx,
+                        "unitType",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Min"
+                    name="min"
+                    value={row.min as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "nonConsumption",
+                        idx,
+                        "min",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Max"
+                    name="max"
+                    value={row.max as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "nonConsumption",
+                        idx,
+                        "max",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Alert Below Value"
+                    name="alertBelow"
+                    value={row.alertBelow as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "nonConsumption",
+                        idx,
+                        "alertBelow",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Alert Above Value"
+                    name="alertAbove"
+                    value={row.alertAbove as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "nonConsumption",
+                        idx,
+                        "alertAbove",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <TextInput
+                    label="Multiplier Factor"
+                    name="multiplier"
+                    value={row.multiplier as string}
+                    onChange={(e) =>
+                      handleMeasureChange(
+                        "nonConsumption",
+                        idx,
+                        "multiplier",
+                        e.target.value
+                      )
+                    }
+                  />
+                  <div className="flex items-center justify-center">
+                    <input
+                      type="checkbox"
+                      checked={row.checkPrevious as boolean}
+                      onChange={(e) =>
+                        handleMeasureChange(
+                          "nonConsumption",
+                          idx,
+                          "checkPrevious",
+                          e.target.checked
+                        )
+                      }
+                    />
+                    <span className="ml-1 text-xs">Check Previous Reading</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeMeasureRow("nonConsumption", idx)}
+                    className="text-red-500 text-lg"
+                  >
+                    <FaTrash />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => removeMeasureRow("nonConsumption", idx)}
-                  className="text-red-500 text-lg"
-                >
-                  <FaTrash />
-                </button>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => addMeasureRow("nonConsumption")}
-              className="text-blue-500 text-xl"
-            >
-              ＋
-            </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => addMeasureRow("nonConsumption")}
+                className="text-blue-500 text-xl"
+              >
+                ＋
+              </button>
+            </div>
           </div>
         </div>
       ),
@@ -1100,35 +1192,39 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     {
       title: "Additional Information",
       content: (
-        <div
-          className="bg-white p-4"
-          style={{ fontFamily: "'PT Sans', sans-serif" }}
-        >
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <TextInput
-              label="Maintained By"
-              name="maintainedBy"
-              value={additional.maintainedBy}
-              onChange={(e) =>
-                setAdditional({ ...additional, maintainedBy: e.target.value })
-              }
-            />
-            <TextInput
-              label="Monitored By"
-              name="monitoredBy"
-              value={additional.monitoredBy}
-              onChange={(e) =>
-                setAdditional({ ...additional, monitoredBy: e.target.value })
-              }
-            />
-            <TextInput
-              label="Managed By"
-              name="managedBy"
-              value={additional.managedBy}
-              onChange={(e) =>
-                setAdditional({ ...additional, managedBy: e.target.value })
-              }
-            />
+        <div style={{ fontFamily: "'PT Sans', sans-serif" }}>
+          <div className="bg-gray-200 text-center py-3 rounded mb-4">
+            <h3 className="text-xl font-bold text-gray-800">
+              Additional Information
+            </h3>
+          </div>
+          <div className="bg-white p-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <TextInput
+                label="Maintained By"
+                name="maintainedBy"
+                value={additional.maintainedBy}
+                onChange={(e) =>
+                  setAdditional({ ...additional, maintainedBy: e.target.value })
+                }
+              />
+              <TextInput
+                label="Monitored By"
+                name="monitoredBy"
+                value={additional.monitoredBy}
+                onChange={(e) =>
+                  setAdditional({ ...additional, monitoredBy: e.target.value })
+                }
+              />
+              <TextInput
+                label="Managed By"
+                name="managedBy"
+                value={additional.managedBy}
+                onChange={(e) =>
+                  setAdditional({ ...additional, managedBy: e.target.value })
+                }
+              />
+            </div>
           </div>
         </div>
       ),
@@ -1136,43 +1232,45 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
     {
       title: "Attachments",
       content: (
-        <div
-          className="bg-white p-4"
-          style={{ fontFamily: "'PT Sans', sans-serif" }}
-        >
-          <div className="mb-8">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div>
-                <div className="mb-2 font-medium">Purchase Invoice</div>
-                <FileUpload
-                  name="invoice"
-                  label=""
-                  onChange={(files) => handleFile("invoice", files)}
-                />
-              </div>
-              <div>
-                <div className="mb-2 font-medium">Insurance Details</div>
-                <FileUpload
-                  name="insurance"
-                  label=""
-                  onChange={(files) => handleFile("insurance", files)}
-                />
-              </div>
-              <div>
-                <div className="mb-2 font-medium">Manuals</div>
-                <FileUpload
-                  name="manuals"
-                  label=""
-                  onChange={(files) => handleFile("manuals", files)}
-                />
-              </div>
-              <div>
-                <div className="mb-2 font-medium">Other Files</div>
-                <FileUpload
-                  name="other"
-                  label=""
-                  onChange={(files) => handleFile("other", files)}
-                />
+        <div style={{ fontFamily: "'PT Sans', sans-serif" }}>
+          <div className="bg-gray-200 text-center py-3 rounded mb-4">
+            <h3 className="text-xl font-bold text-gray-800">Attachments</h3>
+          </div>
+          <div className="bg-white p-4">
+            <div className="mb-8">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div>
+                  <div className="mb-2 font-medium">Purchase Invoice</div>
+                  <FileUpload
+                    name="invoice"
+                    label=""
+                    onChange={(files) => handleFile("invoice", files)}
+                  />
+                </div>
+                <div>
+                  <div className="mb-2 font-medium">Insurance Details</div>
+                  <FileUpload
+                    name="insurance"
+                    label=""
+                    onChange={(files) => handleFile("insurance", files)}
+                  />
+                </div>
+                <div>
+                  <div className="mb-2 font-medium">Manuals</div>
+                  <FileUpload
+                    name="manuals"
+                    label=""
+                    onChange={(files) => handleFile("manuals", files)}
+                  />
+                </div>
+                <div>
+                  <div className="mb-2 font-medium">Other Files</div>
+                  <FileUpload
+                    name="other"
+                    label=""
+                    onChange={(files) => handleFile("other", files)}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -1205,42 +1303,11 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
         </div>
       )}
 
-      {/* Debug Section - Remove in production */}
-      <div className="mb-4 p-4 bg-yellow-100 border border-yellow-300 rounded">
-        <h3 className="font-semibold text-yellow-800 mb-2">
-          Debug Info (Remove in production)
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <strong>Asset Type:</strong> {form.assetType || "Not selected"}
-            <br />
-            <strong>Options:</strong> {assetTypeOptions.length}
-          </div>
-          <div>
-            <strong>Category:</strong> {form.category || "Not selected"}
-            <br />
-            <strong>Options:</strong> {categoryOptions.length}
-          </div>
-          <div>
-            <strong>Group:</strong> {form.group || "Not selected"}
-            <br />
-            <strong>Options:</strong> {groupOptions.length}
-          </div>
-          <div>
-            <strong>Subgroup:</strong> {form.subGroup || "Not selected"}
-            <br />
-            <strong>Options:</strong> {subGroupOptions.length}
-          </div>
+      <div className="mb-4" style={{ fontFamily: "'PT Sans', sans-serif" }}>
+        <div className="bg-gray-200 text-center py-3 rounded mb-4">
+          <h2 className="text-xl font-bold text-gray-800">Location Details</h2>
         </div>
-      </div>
 
-      <div
-        className="mb-4 border-b-4 border-gray-300 pb-2"
-        style={{ fontFamily: "'PT Sans', sans-serif" }}
-      >
-        <h2 className="text-lg font-semibold text-center bg-gray-200 py-1 mb-4">
-          Location Details
-        </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div onClick={handleDropdownClick}>
             <Select
@@ -1312,6 +1379,7 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
             />
           </div>
         </div>
+
         <div className="flex items-center justify-center gap-8 mt-4">
           <div className="flex items-center gap-2">
             <span>Breakdown</span>
@@ -1346,6 +1414,82 @@ const AddAssetForm: React.FC<AddAssetFormProps> = ({
           Save
         </button>
       </div>
+      {afOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setAfOpen(false)}
+          />
+          <div className="relative bg-white w-full max-w-3xl rounded-lg shadow-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-semibold">Auto-fill suggestions</h3>
+              <button
+                type="button"
+                className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300"
+                onClick={() => setAfOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            {afLoading ? (
+              <div className="py-10 text-center">Searching…</div>
+            ) : afResults.length === 0 ? (
+              <div className="py-10 text-center text-gray-600">No results</div>
+            ) : (
+              <div className="max-h-[60vh] overflow-auto space-y-3">
+                {afResults.map((c, idx) => (
+                  <div key={idx} className="border rounded p-3">
+                    <div className="font-medium">
+                      {c.brand || "-"} {c.model ? `• ${c.model}` : ""}
+                    </div>
+                    <div className="text-sm text-gray-700 mt-1">
+                      {c.capacity_value && c.capacity_unit ? (
+                        <>
+                          Capacity:{" "}
+                          <b>
+                            {c.capacity_value} {c.capacity_unit}
+                          </b>
+                        </>
+                      ) : (
+                        <>
+                          Capacity: <span className="opacity-60">-</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-700">
+                      Price:{" "}
+                      {c.purchase_cost ? (
+                        <>
+                          <b>{c.purchase_cost}</b> {c.currency || ""}
+                        </>
+                      ) : (
+                        <span className="opacity-60">-</span>
+                      )}
+                    </div>
+                    {c.url && (
+                      <div className="mt-1 text-xs text-blue-600 underline">
+                        <a href={c.url} target="_blank" rel="noreferrer">
+                          {c.url}
+                        </a>
+                      </div>
+                    )}
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        className="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                        onClick={() => applyCandidate(c)}
+                      >
+                        Use this
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </form>
   );
 };

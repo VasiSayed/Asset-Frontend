@@ -11,7 +11,6 @@ import AMCExpired90Days from "./tabs/Assetmanagement/AMCExpiringIn90Days";
 import ChecklistTab from "./tabs/Assetmanagement/Checklist";
 import Checklistform from "./forms/Checklistform";
 import AssociationBtn from "./forms/Associationbtn";
-import LogoutButton from "./components/LogoutButton";
 import AssetDetails from "./pages/AssetDetails";
 import Navbar from "./layouts/Navbar ";
 
@@ -30,58 +29,54 @@ function App() {
     bootstrapped.current = true;
 
     (async () => {
-      console.log("[App] bootstrapping…");
       const ok = await bootstrapAuth();
-      console.log("[App] bootstrapAuth ->", ok, "authState:", getAuthState());
-
-      // If refresh via cookie failed OR authState still missing -> prompt once
       if (!ok || !getAuthState()) {
-        console.log("[App] No valid cookie/session. Prompting user…");
-        const loggedIn = await interactiveLogin();
-        console.log(
-          "[App] interactiveLogin ->",
-          loggedIn,
-          "authState:",
-          getAuthState()
-        );
+        await interactiveLogin();
       }
     })();
 
-    // periodic refresh
     const id = setInterval(() => {
       refreshAccessToken();
     }, 10 * 60 * 1000);
 
-    return () => {
-      clearInterval(id);
-    };
+    return () => clearInterval(id);
   }, []);
 
   return (
     <>
-      <div className="flex justify-end p-2 bg-gray-100">
-        <LogoutButton />
-      </div>
+      {/* Fixed top navbar */}
+      <Navbar />
 
-      <Routes>
-        <Route>
-          <Route index element={<ChecklistTab />} />
-          <Route path="assetmanagement" element={<Asset />} />
-          <Route path="Navbar" element={<Navbar />} />
-          <Route path="addasset" element={<AddAssetForm />} />
-          <Route path="/assets/view" element={<AssetDetails />} />
-          <Route path="amcexpiredassets" element={<AMCExpiredAssets />} />
-          <Route path="addamc" element={<AddAMCForm onSubmit={() => {}} />} />
-          <Route
-            path="addchecklist"
-            element={<Checklistform onSubmit={() => {}} onClose={() => {}} />}
-          />
-          <Route
-            path="checklist/:id/associations"
-            element={<AssociationBtn />}
-          />
-        </Route>
-      </Routes>
+      {/* Full-width content area below navbar */}
+      <main className="min-h-screen bg-gray-100 pt-20 w-full">
+        {/* optional horizontal padding; remove px-* if you want true edge-to-edge */}
+        <div className="w-full px-4 md:px-6">
+          <Routes>
+            <Route>
+              <Route index element={<ChecklistTab />} />
+              <Route path="assetmanagement" element={<Asset />} />
+              <Route path="addasset" element={<AddAssetForm />} />
+              <Route path="/assets/view" element={<AssetDetails />} />
+              <Route path="amcexpiredassets" element={<AMCExpiredAssets />} />
+              <Route path="amcexpiring90days" element={<AMCExpired90Days />} />
+              <Route
+                path="addamc"
+                element={<AddAMCForm onSubmit={() => {}} />}
+              />
+              <Route
+                path="addchecklist"
+                element={
+                  <Checklistform onSubmit={() => {}} onClose={() => {}} />
+                }
+              />
+              <Route
+                path="checklist/:id/associations"
+                element={<AssociationBtn />}
+              />
+            </Route>
+          </Routes>
+        </div>
+      </main>
 
       <Toaster position="top-right" reverseOrder={false} />
     </>

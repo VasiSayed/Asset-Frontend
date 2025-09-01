@@ -3,7 +3,8 @@ import { refreshAccessToken, getAuthState } from "../services/loginService";
 
 const AccountURL = "http://127.0.0.1:8000";
 const AssetURL = "http://127.0.0.1:8001";
-
+const OperationURL = "http://127.0.0.1:8003";
+const VendorURL = "http://127.0.0.1:8004"
 
 const AccountInstance = axios.create({
   baseURL: `${AccountURL}/api`,
@@ -12,6 +13,16 @@ const AccountInstance = axios.create({
 
 const AssetInstance = axios.create({
   baseURL: `${AssetURL}/api`,
+  headers: { "Content-Type": "application/json" },
+});
+
+const OperationsInstance = axios.create({
+  baseURL: `${OperationURL}/api`,
+  headers: { "Content-Type": "application/json" },
+});
+
+const VendorInstance = axios.create({
+  baseURL: `${VendorURL}/api`,
   headers: { "Content-Type": "application/json" },
 });
 
@@ -76,6 +87,8 @@ function attachAuthInterceptors(instance: any) {
 
 attachAuthInterceptors(AccountInstance);
 attachAuthInterceptors(AssetInstance);
+attachAuthInterceptors(OperationsInstance);
+attachAuthInterceptors(VendorInstance);
 
 
-export { AccountInstance, AssetInstance };
+export { AccountInstance, AssetInstance ,OperationsInstance,VendorInstance};
