@@ -4,6 +4,9 @@ import Select from "../components/Select";
 import IconButton from "../components/IconButton";
 import Pagination from "../components/Pagination";
 import Tabs from "../components/Tabs";
+import CronSettingOld, {
+  type CronValue as CronOldValue,
+} from "../components/CronSettingOld";
 
 import {
   FiTrash2,
@@ -53,6 +56,28 @@ const Button: React.FC<
   >
     {children}
   </button>
+);
+
+const DatePicker = ({ label, name, value, onChange, min, max, error }) => (
+  <div className="mb-4">
+    {label && (
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {label}
+      </label>
+    )}
+    <input
+      type="date"
+      name={name}
+      value={value}
+      onChange={onChange}
+      min={min}
+      max={max}
+      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+        error ? "border-red-500" : "border-gray-300"
+      }`}
+    />
+    {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
+  </div>
 );
 
 // Simple Multi-Select Dropdown Component
@@ -161,10 +186,89 @@ const MultiSelectDropdown: React.FC<{
   );
 };
 
+/* ===== Mapping helpers for CronSettingOld ===== */
+const MONTHS12 = [
+  "JAN",
+  "FEB",
+  "MAR",
+  "APR",
+  "MAY",
+  "JUN",
+  "JUL",
+  "AUG",
+  "SEP",
+  "OCT",
+  "NOV",
+  "DEC",
+];
+const MONTH_TO_INT: Record<string, number> = Object.fromEntries(
+  MONTHS12.map((m, i) => [m, i + 1])
+);
+const INT_TO_MONTH = (n: number) => MONTHS12[n - 1];
+
+// Old component uses MON=0..SUN=6
+const DOW_MON0 = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+const DOW_TO_IDX_MON0: Record<string, number> = Object.fromEntries(
+  DOW_MON0.map((d, i) => [d, i])
+);
+const IDX_TO_DOW_MON0 = (i: number) => DOW_MON0[i];
+
+interface CronData {
+  cronMonths?: string[];
+  cronDays?: string[];
+  cronWeeks?: string[];
+  cronHours?: string[];
+  cronMinutes?: string[];
+  cronSeconds?: string[];
+}
+
+function formToOld(
+  cronData: CronData,
+  cronScope: "year" | "month" | "week" | "day" | "hour"
+): CronOldValue {
+  return {
+    frequency: cronScope,
+    months: cronData.cronMonths?.length
+      ? cronData.cronMonths.map((m) => MONTH_TO_INT[m]).filter(Boolean)
+      : null,
+    dates: cronData.cronDays?.length
+      ? cronData.cronDays.map((d) => Number(d))
+      : null,
+    weekdays: cronData.cronWeeks?.length
+      ? cronData.cronWeeks
+          .map((w) => DOW_TO_IDX_MON0[w])
+          .filter((x) => x !== undefined)
+      : null,
+    hours: cronData.cronHours?.length
+      ? cronData.cronHours.map((h) => Number(h))
+      : null,
+    minutes: cronData.cronMinutes?.length
+      ? cronData.cronMinutes.map((m) => Number(m))
+      : null,
+    seconds: cronData.cronSeconds?.length
+      ? cronData.cronSeconds.map((s) => Number(s))
+      : null,
+  };
+}
+
+function oldToForm(old: CronOldValue): CronData {
+  return {
+    cronMonths: old.months ? old.months.map(INT_TO_MONTH) : [],
+    cronDays: old.dates ? old.dates.map(String) : [],
+    cronWeeks: old.weekdays ? old.weekdays.map((i) => IDX_TO_DOW_MON0(i)) : [],
+    cronHours: old.hours ? old.hours.map(String) : [],
+    cronMinutes: old.minutes ? old.minutes.map(String) : [],
+    cronSeconds: old.seconds ? old.seconds.map(String) : [],
+  };
+}
+
 const AssociationBtn: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const checklistId = Number(id);
+  if (!Number.isFinite(checklistId)) {
+    return <div className="p-4 text-red-600">Invalid checklist id</div>;
+  }
 
   const siteId =
     Number((window as any)?.site_id) ||
@@ -173,6 +277,23 @@ const AssociationBtn: React.FC = () => {
 
   const [page, setPage] = useState(1);
   const [activeTab, setActiveTab] = useState<string>("Checklist");
+
+  // Date state
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [dateError, setDateError] = useState<string>("");
+
+  // Cron state
+  const [cronData, setCronData] = useState<CronData>({
+    cronMonths: [],
+    cronDays: [],
+    cronWeeks: [],
+    cronHours: ["9"],
+    cronMinutes: ["0"],
+    cronSeconds: [],
+  });
+  type CronScope = "year" | "month" | "week" | "day" | "hour";
+  const [cronScope, setCronScope] = useState<CronScope>("week");
 
   // FILTER STATE (now lives in a modal)
   const [locationOpt, setLocationOpt] = useState<string>("");
@@ -198,6 +319,7 @@ const AssociationBtn: React.FC = () => {
   // rows
   const [associations, setAssociations] = useState<AssociationRow[]>([]);
 
+  const [assetSelectValue, setAssetSelectValue] = useState<string>("");
   // UX
   const [loading, setLoading] = useState(false);
   const [loadingAssets, setLoadingAssets] = useState(false);
@@ -210,6 +332,38 @@ const AssociationBtn: React.FC = () => {
     () => associations.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
     [associations, page]
   );
+
+  // Date validation
+  const validateDates = (start: Date | null, end: Date | null) => {
+    if (!start || !end) return "";
+
+    if (start >= end) {
+      return "End date must be after start date";
+    }
+
+    const diffTime = end.getTime() - start.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays > 366) {
+      return "Date range cannot exceed 366 days";
+    }
+
+    return "";
+  };
+
+  const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const date = e.target.value ? new Date(e.target.value) : null;
+    setStartDate(date);
+    const error = validateDates(date, endDate);
+    setDateError(error);
+  };
+
+  const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const date = e.target.value ? new Date(e.target.value) : null;
+    setEndDate(date);
+    const error = validateDates(startDate, date);
+    setDateError(error);
+  };
 
   const handleTabChange = (key: string | number) => {
     const tabKey = String(key);
@@ -227,11 +381,9 @@ const AssociationBtn: React.FC = () => {
         navigate("/Assetmanagement?tab=Checklist");
         break;
       case "PPM":
-        // Add PPM navigation if needed
         navigate("/Assetmanagement?tab=PPM");
         break;
       case "Stock Items":
-        // Add Stock Items navigation if needed
         navigate("/Assetmanagement?tab=Stock+Items");
         break;
       default:
@@ -287,9 +439,7 @@ const AssociationBtn: React.FC = () => {
         const opts = (users || []).map((u: any) => ({
           id: u.id,
           label:
-            (u.first_name || u.last_name
-              ? `${u.first_name || ""} ${u.last_name || ""}`.trim()
-              : u.username) + (u.role_name ? ` • ${u.role_name}` : ""),
+            (u.username),
         }));
         if (mounted) setUserOptions(opts);
       } catch (err: any) {
@@ -301,6 +451,68 @@ const AssociationBtn: React.FC = () => {
       mounted = false;
     };
   }, [siteId]);
+
+  // shape that your backend returns (for clarity)
+  type AssocAPI = {
+    id: number;
+    checklist: number;
+    asset_id: number;
+    asset_name: string;
+    user_id: number;
+    username: string;
+    created_at: string;
+    updated_at: string;
+  };
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        if (!Number.isFinite(checklistId)) return;
+
+        // 1) call your endpoint with the id in query string
+        const data: AssocAPI[] = await GetAssociationChecklist(checklistId);
+
+        // 2) group by asset, collect user names for display
+        const byAsset = new Map<number, { name: string; users: Set<string> }>();
+
+        for (const row of data || []) {
+          if (!byAsset.has(row.asset_id)) {
+            byAsset.set(row.asset_id, {
+              name: row.asset_name || `Asset ${row.asset_id}`,
+              users: new Set<string>(),
+            });
+          }
+          byAsset
+            .get(row.asset_id)!
+            .users.add(row.username || `user:${row.user_id}`);
+        }
+
+        // 3) convert to your AssociationRow[]
+        const rows: AssociationRow[] = Array.from(byAsset.entries()).map(
+          ([assetId, v]) => ({
+            id: assetId,
+            assetName: v.name,
+            assignedTo: Array.from(v.users).join(", ") || "-",
+          })
+        );
+
+        if (mounted) setAssociations(rows);
+
+        // (optional) pre-select users already assigned on this checklist:
+        const userIds = Array.from(new Set((data || []).map((r) => r.user_id)));
+        if (mounted && userIds.length) setSelectedUserIds(userIds);
+      } catch (err: any) {
+        showToast(
+          `Failed to load associations: ${err?.message || "Request failed"}`,
+          "error"
+        );
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [checklistId]);
 
   // dependent filters
   useEffect(() => {
@@ -389,8 +601,41 @@ const AssociationBtn: React.FC = () => {
   const handleDelete = (id: number) =>
     setAssociations((prev) => prev.filter((entry) => entry.id !== id));
 
+  // Helper functions for cron rule generation
+  const toISO = (d: Date) =>
+    new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+      .toISOString()
+      .slice(0, 10);
+
+  const dowIndex = (d: string) =>
+    (({ SUN: 0, MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6 } as any)[d]);
+
+  const buildCronRule = (scope: CronScope, cronData: CronData) => {
+    return {
+      scope: scope.toUpperCase(),
+      days_of_week: (cronData.cronWeeks || []).length
+        ? (cronData.cronWeeks || [])
+            .map(dowIndex)
+            .filter((x) => x !== undefined)
+        : [0, 1, 2, 3, 4, 5, 6],
+      hours: (cronData.cronHours || [])
+        .map((h) => parseInt(h))
+        .filter((n) => !Number.isNaN(n)),
+      minutes: (cronData.cronMinutes || [])
+        .map((m) => parseInt(m))
+        .filter((n) => !Number.isNaN(n)),
+      timezone: "Asia/Kolkata",
+      enabled: true,
+    };
+  };
+
   const handleCreateActivity = async () => {
     if (!checklistId || associations.length === 0) return;
+
+    if (dateError) {
+      showToast("Please fix date validation errors", "error");
+      return;
+    }
 
     const asset_ids = associations.map((a) => a.id);
     const asset_map = associations.reduce<Record<string, string>>((acc, a) => {
@@ -411,6 +656,9 @@ const AssociationBtn: React.FC = () => {
       user_ids,
       asset_map,
       user_map,
+      start_date: startDate ? toISO(startDate) : null,
+      end_date: endDate ? toISO(endDate) : null,
+      cron_rule: buildCronRule(cronScope, cronData),
     };
 
     try {
@@ -506,6 +754,41 @@ const AssociationBtn: React.FC = () => {
         <h1 className="text-xl font-bold text-gray-800">Associate Checklist</h1>
       </div>
 
+      {/* Date Range Section */}
+      <div className="bg-white border rounded-lg p-4">
+        <h3 className="text-lg font-semibold mb-4">Schedule Duration</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <DatePicker
+            label="Start Date"
+            name="startDate"
+            value={startDate ? startDate.toISOString().split("T")[0] : ""}
+            onChange={handleStartDateChange}
+            error={dateError && startDate ? dateError : ""}
+          />
+          <DatePicker
+            label="End Date"
+            name="endDate"
+            value={endDate ? endDate.toISOString().split("T")[0] : ""}
+            onChange={handleEndDateChange}
+            min={startDate ? startDate.toISOString().split("T")[0] : ""}
+            error={dateError && endDate ? dateError : ""}
+          />
+        </div>
+      </div>
+
+      {/* Cron Settings Section */}
+      <div className="bg-white border rounded-lg p-4">
+        <h3 className="text-lg font-semibold mb-4">Schedule Settings</h3>
+        <CronSettingOld
+          value={formToOld(cronData, cronScope)}
+          onChange={(next: CronOldValue) => {
+            const patch = oldToForm(next);
+            setCronScope(next.frequency);
+            setCronData(patch);
+          }}
+        />
+      </div>
+
       {/* Selection row - properly aligned */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
         {/* Asset select */}
@@ -516,11 +799,14 @@ const AssociationBtn: React.FC = () => {
           <Select
             name="selectAsset"
             placeholder={loadingAssets ? "Loading assets..." : "Select Asset"}
-            value={""}
-            onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
-              addRow(e.target.value)
-            }
-            options={["", ...assetOptions]}
+            value={assetSelectValue}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+              const v = e.target.value;
+              if (!v) return; // ignore if somehow empty
+              addRow(v); // add to the table
+              setAssetSelectValue(""); // reset so placeholder shows again
+            }}
+            options={assetOptions} // ← no ["", ...assetOptions]
           />
         </div>
 
@@ -542,7 +828,7 @@ const AssociationBtn: React.FC = () => {
             onClick={handleCreateActivity}
             tooltip="Create Association"
             className="w-full"
-            disabled={associations.length === 0}
+            disabled={associations.length === 0 || !!dateError}
           >
             Create Activity
           </Button>

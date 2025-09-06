@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Tabs from "../components/Tabs";
 import AssetsTab from "../tabs/Assetmanagement/AssetsList";
-import { AllAssetBySite } from "../api/endpoints";
+import { AllAssetBySite, TakeReading } from "../api/endpoints";
 import AMCTab from "../tabs/Assetmanagement/Amctab";
 import ChecklistTab from "../tabs/Assetmanagement/Checklist";
 import PPMTab from "../tabs/Assetmanagement/PPM/Ppm";

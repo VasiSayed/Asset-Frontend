@@ -13,6 +13,9 @@ import Checklistform from "./forms/Checklistform";
 import AssociationBtn from "./forms/Associationbtn";
 import AssetDetails from "./pages/AssetDetails";
 import Navbar from "./layouts/Navbar ";
+import AssetChecklist from "./pages/AssetChecklist";
+import RunSubmit from "./pages/RunSubmit";
+
 
 import {
   refreshAccessToken,
@@ -53,6 +56,11 @@ function App() {
         <div className="w-full px-4 md:px-6">
           <Routes>
             <Route>
+              <Route
+                path="/assets/:assetId/checklist"
+                element={<AssetChecklist />}
+              />
+              <Route path="/runs/:runId" element={<RunSubmit />} />
               <Route index element={<ChecklistTab />} />
               <Route path="assetmanagement" element={<Asset />} />
               <Route path="addasset" element={<AddAssetForm />} />

@@ -277,6 +277,7 @@ export async function AutofillAsset(query: string) {
   };
 }
 
+
 export const GetAssociationChecklist = async (checklistId: number) => {
   const { data } = await OperationsInstance.get(
     "/checklist-associations/by-checklist",
@@ -284,3 +285,94 @@ export const GetAssociationChecklist = async (checklistId: number) => {
   );
   return Array.isArray(data) ? data : data?.results ?? data;
 };
+
+// --- measures list for an asset ---
+export async function fetchAssetMeasures(
+  assetId: number,
+  params: { page?: number; page_size?: number } = {}
+) {
+  const { data } = await AssetInstance.get(`/assets/${assetId}/measures/`, {
+    params: { page_size: 1000, ...params },
+  });
+  return data as {
+    count: number;
+    next: string | null;
+    previous: string | null;
+    results: Array<{
+      id: number;
+      asset: number;
+      measure_type: "consumption" | "nonConsumption";
+      name: string;
+      unit_type: string;
+      min_value: string | null;
+      max_value: string | null;
+      alert_below: string | null;
+      alert_above: string | null;
+      multiplier: string | null;
+      check_previous: boolean;
+      created_at: string;
+    }>;
+  };
+}
+
+// --- create ONE reading ---
+export async function createMeasureReading(input: {
+  measure: number;              // <-- backend expects `measure`
+  reading_value: number;
+}) {
+  const { data } = await AssetInstance.post(`/measure-readings/`, input);
+  return data as {
+    id: number;
+    measure: number;
+    reading_value: string;
+    created_at: string;
+  };
+}
+
+// (optional but recommended) keep a backwards-compatible single-reading helper
+// so old call sites that send { measure_id, reading_value } won't break
+export const TakeReading = async (
+  payload:
+    | { measure: number; reading_value: number }
+    | { measure_id: number; reading_value: number }
+) => {
+  const body =
+    "measure" in payload
+      ? payload
+      : { measure: (payload as any).measure_id, reading_value: payload.reading_value };
+
+  const { data } = await AssetInstance.post("/measure-readings/", body);
+  return data;
+};
+
+
+
+
+
+export async function getChecklistsByScheduleRun(
+  assetId: number,
+  params?: { month?: string; date?: string; status?: string }
+) {
+  const { data } = await OperationsInstance.get(
+    "/checklists/by-schedule-run/",
+    {
+      params: { asset_id: assetId, ...(params || {}) },
+    }
+  );
+  return data;
+}
+
+export async function submitRunBulk(
+  runId: number,
+  payload: { answers: any[]; finalize?: boolean }
+) {
+  const { data } = await OperationsInstance.post(
+    `/runs/${runId}/submit/bulk`,
+    payload
+  );
+  return data;
+}
+
+
+
+

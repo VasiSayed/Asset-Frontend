@@ -1,7 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import CronSettingOld, {
-  type CronValue as CronOldValue,
-} from "../components/CronSettingOld";
 import {
   getGroup,
   getSupplier,
@@ -123,7 +120,7 @@ interface BlockQuestion {
   answerType: string;
   mandatory: boolean;
   reading: boolean;
-  helpText: boolean;
+  helpText: string;
   dropdownOptions?: DropdownOption[];
   numberConfig?: { min?: number; max?: number; decimals?: boolean };
 }
@@ -139,7 +136,7 @@ interface Question {
   answerType: string;
   mandatory: boolean;
   reading: boolean;
-  helpText: boolean;
+  helpText: string;
   dropdownOptions?: DropdownOption[];
   numberConfig?: { min?: number; max?: number; decimals?: boolean };
 }
@@ -154,6 +151,7 @@ interface RemoteVendor {
 
 interface FormData {
   checklistName?: string;
+  description?: string;
   frequency?: string;
   startDate?: Date | null;
   endDate?: Date | null;
@@ -172,89 +170,12 @@ interface FormData {
 
   lockOverdueTask?: string; // "Yes" | "No"
   lockGroupForOverdue?: string[]; // store NAMES
-
-  // Cron selections (your existing shape)
-  cronMonths?: string[]; // ["JAN","FEB",...]
-  cronDays?: string[]; // ["1","15",...]
-  cronWeeks?: string[]; // ["MON","TUE",...]
-  cronHours?: string[]; // ["0","14",...]
-  cronMinutes?: string[]; // ["0","30",...]
-  cronSeconds?: string[]; // not used by old UI
 }
 
 interface ChecklistFormProps {
   onClose: () => void;
   onSubmit?: (data: any) => void;
   initialData?: any;
-}
-
-/* ===== Mapping helpers for CronSettingOld <-> existing form shape ===== */
-const MONTHS12 = [
-  "JAN",
-  "FEB",
-  "MAR",
-  "APR",
-  "MAY",
-  "JUN",
-  "JUL",
-  "AUG",
-  "SEP",
-  "OCT",
-  "NOV",
-  "DEC",
-];
-const MONTH_TO_INT: Record<string, number> = Object.fromEntries(
-  MONTHS12.map((m, i) => [m, i + 1])
-);
-const INT_TO_MONTH = (n: number) => MONTHS12[n - 1];
-
-// Old component uses MON=0..SUN=6; your form uses "SUN, MON, TUE..." strings.
-const DOW_MON0 = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
-const DOW_TO_IDX_MON0: Record<string, number> = Object.fromEntries(
-  DOW_MON0.map((d, i) => [d, i])
-);
-const IDX_TO_DOW_MON0 = (i: number) => DOW_MON0[i];
-
-const pad2 = (n: number | string) => String(n).padStart(2, "0");
-
-function formToOld(
-  formData: FormData,
-  cronScope: "year" | "month" | "week" | "day" | "hour"
-): CronOldValue {
-  return {
-    frequency: cronScope,
-    months: formData.cronMonths?.length
-      ? formData.cronMonths.map((m) => MONTH_TO_INT[m]).filter(Boolean)
-      : null,
-    dates: formData.cronDays?.length
-      ? formData.cronDays.map((d) => Number(d))
-      : null,
-    weekdays: formData.cronWeeks?.length
-      ? formData.cronWeeks
-          .map((w) => DOW_TO_IDX_MON0[w])
-          .filter((x) => x !== undefined)
-      : null,
-    hours: formData.cronHours?.length
-      ? formData.cronHours.map((h) => Number(h))
-      : null,
-    minutes: formData.cronMinutes?.length
-      ? formData.cronMinutes.map((m) => Number(m))
-      : null,
-    seconds: formData.cronSeconds?.length
-      ? formData.cronSeconds.map((s) => Number(s))
-      : null,
-  };
-}
-
-function oldToForm(old: CronOldValue) {
-  return {
-    cronMonths: old.months ? old.months.map(INT_TO_MONTH) : [],
-    cronDays: old.dates ? old.dates.map(String) : [],
-    cronWeeks: old.weekdays ? old.weekdays.map((i) => IDX_TO_DOW_MON0(i)) : [],
-    cronHours: old.hours ? old.hours.map(String) : [],
-    cronMinutes: old.minutes ? old.minutes.map(String) : [],
-    cronSeconds: old.seconds ? old.seconds.map(String) : [],
-  };
 }
 
 /* =================== Component =================== */
@@ -265,20 +186,10 @@ export default function ChecklistForm({
 }: ChecklistFormProps) {
   const [formData, setFormData] = useState<FormData>(
     initialData || {
-      cronMonths: [],
-      cronDays: [],
-      cronWeeks: [],
-      cronHours: [],
-      cronMinutes: [],
-      cronSeconds: [],
       lockGroupForOverdue: [],
     }
   );
   const [activeTab, setActiveTab] = useState<string>("Checklist");
-
-  // Cron scope
-  type CronScope = "year" | "month" | "week" | "day" | "hour";
-  const [cronScope, setCronScope] = useState<CronScope>("day");
 
   // Remote data
   const [remoteGroups, setRemoteGroups] = useState<RemoteGroup[]>([]);
@@ -298,15 +209,11 @@ export default function ChecklistForm({
 
   // Static options
   const frequencyOptions = [
-    { value: "hourly", label: "Hourly" },
     { value: "daily", label: "Daily" },
     { value: "weekly", label: "Weekly" },
-    { value: "biweekly", label: "Biweekly" },
     { value: "monthly", label: "Monthly" },
     { value: "quarterly", label: "Quarterly" },
-    { value: "half_yearly", label: "Half-yearly" },
     { value: "yearly", label: "Yearly" },
-    { value: "custom", label: "Custom" },
   ];
   const priorityOptions = [
     { value: "1", label: "Low" },
@@ -315,7 +222,8 @@ export default function ChecklistForm({
   ];
   const answerTypeOptions = [
     "Text",
-    "Number",
+    "Number", 
+    "Boolean",
     "Date",
     "Time",
     "Multi Choice",
@@ -413,7 +321,7 @@ export default function ChecklistForm({
     answerType: "",
     mandatory: false,
     reading: false,
-    helpText: false,
+    helpText: "",
     dropdownOptions: undefined,
   });
 
@@ -572,37 +480,11 @@ export default function ChecklistForm({
     const pad = (n: number) => String(n).padStart(2, "0");
     return `${pad(H)}:${pad(M)}:${pad(S)}`;
   };
-  const slug = (s: string) =>
-    s
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_|_$/g, "")
-      .toUpperCase();
-  const dowIndex = (d: string) =>
-    (({ SUN: 0, MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6 } as any)[d]);
+  
   const toISO = (d: Date) =>
     new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
       .toISOString()
       .slice(0, 10);
-  const buildCronLabel = (scope: CronScope, s: FormData) => {
-    const hh = (s.cronHours || []).join(",") || "0";
-    const mm = (s.cronMinutes || []).join(",") || "0";
-    switch (scope) {
-      case "day":
-        return `Every day at ${hh}:${mm}`;
-      case "week":
-        return `Weekly on ${(s.cronWeeks || []).join(",")} at ${hh}:${mm}`;
-      case "month":
-        return `Monthly on ${(s.cronDays || []).join(",")} at ${hh}:${mm}`;
-      case "year":
-        return `Yearly ${(s.cronMonths || []).join(",")} ${(
-          s.cronDays || []
-        ).join(",")} at ${hh}:${mm}`;
-      case "hour":
-        return `Every hour at :${mm}`;
-    }
-  };
 
   const buildPayload = () => {
     const groupsOrdered = groupBlocks
@@ -610,9 +492,8 @@ export default function ChecklistForm({
         const found = remoteGroups.find(
           (rg) => rg.name?.toLowerCase() === b.groupName?.toLowerCase()
         );
-        return found ? { group: found.id, order: i + 1 } : null;
-      })
-      .filter(Boolean) as { group: number; order: number }[];
+        return found ? { group: found.id, order: i + 1 } : { group: null, order: i };
+      });
 
     const questions: any[] = [];
     groupBlocks.forEach((block, section_idx) => {
@@ -620,73 +501,61 @@ export default function ChecklistForm({
         const base: any = {
           section_idx,
           text: q.questionName,
-          help_text: "",
+          help_text: q.helpText || "",
           required: !!q.mandatory,
-          allow_na: !q.mandatory,
-          priority: parseInt(formData.priorityLevel || "3") || 3,
+          priority: parseInt(formData.priorityLevel || "2") || 2,
           order: qi + 1,
         };
+        
         switch (q.answerType) {
           case "Text":
-            questions.push({ ...base, response_type: "TEXT" });
+            questions.push({ 
+              ...base, 
+              response_type: "text"
+            });
             break;
           case "Number":
             questions.push({
               ...base,
-              response_type: "NUMBER",
+              response_type: "number",
               min_value: q.numberConfig?.min ?? undefined,
               max_value: q.numberConfig?.max ?? undefined,
             });
             break;
+          case "Boolean":
+            questions.push({ 
+              ...base, 
+              response_type: "boolean",
+              render_as: "TOGGLE"
+            });
+            break;
           case "Date":
-            questions.push({ ...base, response_type: "DATE" });
+            questions.push({ ...base, response_type: "date" });
             break;
           case "Time":
-            questions.push({ ...base, response_type: "TIME" });
+            questions.push({ ...base, response_type: "time" });
             break;
           case "Multi Choice":
             questions.push({
               ...base,
-              response_type: "MULTI_SELECT",
+              response_type: "multi_select",
               render_as: "CHECKBOX_GROUP",
               options: (q.dropdownOptions || [])
                 .filter((o) => o.text)
                 .map((o, idx) => ({
                   name: o.text,
-                  value: slug(o.text),
+                  value: o.text.toLowerCase().replace(/\s+/g, '_'),
                   order: idx + 1,
                   score_value: o.type === "P" ? 1 : 0,
                 })),
             });
             break;
           default:
-            questions.push({ ...base, response_type: "TEXT" });
+            questions.push({ ...base, response_type: "text" });
         }
       });
     });
 
-    const cron_rule = {
-      scope: cronScope,
-      days_of_week: (formData.cronWeeks || []).length
-        ? (formData.cronWeeks || [])
-            .map(dowIndex)
-            .filter((x) => x !== undefined)
-        : [0, 1, 2, 3, 4, 5, 6],
-      hours: (formData.cronHours || [])
-        .map((h) => parseInt(h))
-        .filter((n) => !Number.isNaN(n)),
-      minutes: (formData.cronMinutes || [])
-        .map((m) => parseInt(m))
-        .filter((n) => !Number.isNaN(n)),
-      timezone: "Asia/Kolkata",
-      label: buildCronLabel(cronScope, formData),
-      enabled: true,
-    };
-
-    const supervisorIds = formData.supervisors
-      ? [parseInt(formData.supervisors)]
-      : [];
-    const supplierId = formData.supplier ? parseInt(formData.supplier) : null;
     const lockedGroupIds = (formData.lockGroupForOverdue || [])
       .map((name) => remoteGroups.find((rg) => rg.name === name)?.id)
       .filter((x) => x != null) as number[];
@@ -694,14 +563,14 @@ export default function ChecklistForm({
     return {
       checklist: {
         name: formData.checklistName || "",
-        description: "",
+        description: formData.description || "",
         start_date: formData.startDate ? toISO(formData.startDate) : null,
         end_date: formData.endDate ? toISO(formData.endDate) : null,
         priority: parseInt(formData.priorityLevel || "2") || 2,
+        frequency: formData.frequency || "DAILY",
       },
       groups: groupsOrdered,
       questions,
-      cron_rule,
       cron_settings: {
         allowed_time_to_submit: toHHMMSS(
           formData.allowedTimeDay,
@@ -714,8 +583,6 @@ export default function ChecklistForm({
           formData.extensionTimeMinutes
         ),
         lock_overdue_task: formData.lockOverdueTask === "Yes",
-        supervisors: supervisorIds,
-        supplier_id: supplierId,
         locked_group_ids: lockedGroupIds,
       },
     };
@@ -764,6 +631,13 @@ export default function ChecklistForm({
             value={formData.checklistName || ""}
             onChange={handleChange}
             placeholder="Enter checklist name"
+          />
+          <TextInput
+            label="Description"
+            name="description"
+            value={formData.description || ""}
+            onChange={handleChange}
+            placeholder="Enter description"
           />
           <Select
             label="Frequency"
@@ -914,35 +788,90 @@ export default function ChecklistForm({
                         )
                       }
                     />
-                    <div className="flex items-center gap-4 pt-6">
-                      <Checkbox
-                        label="Mandatory"
-                        name="mandatory"
-                        checked={q.mandatory}
+                    <TextInput
+                      label="Help Text"
+                      name="helpText"
+                      value={q.helpText}
+                      onChange={(e) =>
+                        handleQuestionUpdate(
+                          block.id,
+                          q.id,
+                          "helpText",
+                          e.target.value
+                        )
+                      }
+                      placeholder="Enter help text"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4 mb-3">
+                    <Checkbox
+                      label="Mandatory"
+                      name="mandatory"
+                      checked={q.mandatory}
+                      onChange={(e) =>
+                        handleQuestionUpdate(
+                          block.id,
+                          q.id,
+                          "mandatory",
+                          e.target.value
+                        )
+                      }
+                    />
+                    <Checkbox
+                      label="Reading"
+                      name="reading"
+                      checked={q.reading}
+                      onChange={(e) =>
+                        handleQuestionUpdate(
+                          block.id,
+                          q.id,
+                          "reading",
+                          e.target.value
+                        )
+                      }
+                    />
+                  </div>
+
+                  {/* Number Config */}
+                  {q.answerType === "Number" && (
+                    <div className="grid grid-cols-2 gap-4 mb-3">
+                      <TextInput
+                        label="Min Value"
+                        name="minValue"
+                        value={q.numberConfig?.min?.toString() || ""}
                         onChange={(e) =>
                           handleQuestionUpdate(
                             block.id,
                             q.id,
-                            "mandatory",
-                            e.target.value
+                            "numberConfig",
+                            { 
+                              ...q.numberConfig, 
+                              min: e.target.value ? parseInt(e.target.value) : undefined 
+                            }
                           )
                         }
+                        placeholder="0"
                       />
-                      <Checkbox
-                        label="Reading"
-                        name="reading"
-                        checked={q.reading}
+                      <TextInput
+                        label="Max Value"
+                        name="maxValue"
+                        value={q.numberConfig?.max?.toString() || ""}
                         onChange={(e) =>
                           handleQuestionUpdate(
                             block.id,
                             q.id,
-                            "reading",
-                            e.target.value
+                            "numberConfig",
+                            { 
+                              ...q.numberConfig, 
+                              max: e.target.value ? parseInt(e.target.value) : undefined 
+                            }
                           )
                         }
+                        placeholder="100"
                       />
                     </div>
-                  </div>
+                  )}
 
                   {/* Multi Choice Options */}
                   {q.answerType === "Multi Choice" && (
@@ -1184,33 +1113,6 @@ export default function ChecklistForm({
               )}
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Section 3: Cron Setting */}
-      <div className="mt-8">
-        <div className="bg-gray-200 text-center py-3 rounded mb-4">
-          <h2 className="text-xl font-bold text-gray-800">Cron Setting</h2>
-        </div>
-
-        <div className="border border-gray-300 rounded-lg p-6">
-          <CronSettingOld
-            value={formToOld(formData, cronScope)}
-            onChange={(next: CronOldValue) => {
-              const patch = oldToForm(next);
-              setCronScope(next.frequency);
-              setFormData((s) => ({ ...s, ...patch }));
-            }}
-          />
-
-          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded">
-            <h4 className="text-sm font-medium text-blue-900 mb-1">
-              Schedule Preview:
-            </h4>
-            <p className="text-sm text-blue-800">
-              {buildCronLabel(cronScope, formData)}
-            </p>
-          </div>
         </div>
       </div>
 
