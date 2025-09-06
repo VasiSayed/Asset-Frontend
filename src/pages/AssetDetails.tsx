@@ -53,6 +53,37 @@ const MultiReadingModal: React.FC<{
   const [errors, setErrors] = useState<Record<number, string>>({});
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
+  // helpers
+  const toNum = (s: string) => {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : NaN;
+  };
+  const nOrUndef = (s: string | null) =>
+    s === null || s === "" ? undefined : Number(s);
+
+  const validateOne = (m: Measure, raw: string): string => {
+    if (!raw.trim()) return "Required";
+    const n = toNum(raw);
+    if (Number.isNaN(n)) return "Must be a number";
+
+    const min = nOrUndef(m.min_value);
+    const max = nOrUndef(m.max_value);
+
+    if (min !== undefined && n < min) return `Must be ≥ ${min}`;
+    if (max !== undefined && n > max) return `Must be ≤ ${max}`;
+    return "";
+  };
+
+  const validateAll = (): boolean => {
+    const next: Record<number, string> = {};
+    measures.forEach((m) => {
+      const msg = validateOne(m, values[m.id] ?? "");
+      if (msg) next[m.id] = msg;
+    });
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
   // load measures when opened
   useEffect(() => {
     if (!isOpen || !assetId) return;
@@ -68,7 +99,6 @@ const MultiReadingModal: React.FC<{
         if (cancelled) return;
         const list = data.results || [];
         setMeasures(list);
-        // init empty inputs
         const init: Record<number, string> = {};
         list.forEach((m) => (init[m.id] = ""));
         setValues(init);
@@ -89,41 +119,38 @@ const MultiReadingModal: React.FC<{
     onClose();
   };
 
-  const parseNum = (s: string) => (s === "" || s == null ? NaN : Number(s));
-
-  // simple validations: required + min/max (if present)
-  const validateAll = (): boolean => {
-    const nextErr: Record<number, string> = {};
-    measures.forEach((m) => {
-      const raw = values[m.id] ?? "";
-      if (raw.trim() === "") {
-        nextErr[m.id] = "Required";
-        return;
-      }
-      const n = Number(raw);
-      if (Number.isNaN(n)) {
-        nextErr[m.id] = "Must be a number";
-        return;
-      }
-      if (
-        m.min_value != null &&
-        m.min_value !== "" &&
-        n < Number(m.min_value)
-      ) {
-        nextErr[m.id] = `Min ${m.min_value}`;
-        return;
-      }
-      if (
-        m.max_value != null &&
-        m.max_value !== "" &&
-        n > Number(m.max_value)
-      ) {
-        nextErr[m.id] = `Max ${m.max_value}`;
-        return;
-      }
+  const handleChange = (m: Measure, raw: string) => {
+    setValues((s) => ({ ...s, [m.id]: raw }));
+    const msg = validateOne(m, raw);
+    setErrors((s) => {
+      const next = { ...s };
+      if (msg) next[m.id] = msg;
+      else delete next[m.id];
+      return next;
     });
-    setErrors(nextErr);
-    return Object.keys(nextErr).length === 0;
+  };
+
+  // optional: clamp to nearest bound on blur
+  const handleBlur = (m: Measure) => {
+    const raw = values[m.id] ?? "";
+    const n = toNum(raw);
+    if (Number.isNaN(n)) return;
+    const min = nOrUndef(m.min_value);
+    const max = nOrUndef(m.max_value);
+    let clamped = n;
+    if (min !== undefined && clamped < min) clamped = min;
+    if (max !== undefined && clamped > max) clamped = max;
+    if (clamped !== n) {
+      const fixed = String(clamped);
+      setValues((s) => ({ ...s, [m.id]: fixed }));
+      const msg = validateOne(m, fixed);
+      setErrors((s) => {
+        const next = { ...s };
+        if (msg) next[m.id] = msg;
+        else delete next[m.id];
+        return next;
+      });
+    }
   };
 
   const handleSave = async () => {
@@ -135,23 +162,36 @@ const MultiReadingModal: React.FC<{
     try {
       const payloads = measures.map((m) => ({
         measure: m.id,
-        reading_value: Math.round(parseNum(values[m.id]) * 10000) / 10000,
+        reading_value: Math.round(toNum(values[m.id]) * 10000) / 10000,
       }));
 
       const results = await Promise.allSettled(
         payloads.map((p) => createMeasureReading(p))
       );
 
-      const ok = results.filter(
-        (r) => r.status === "fulfilled"
-      ) as PromiseFulfilledResult<{
-        id: number;
-        measure: number;
-        reading_value: string;
-        created_at: string;
-      }>[];
+      // attach any API validation errors back to their inputs
+      const apiErrs: Record<number, string> = {};
+      results.forEach((r, i) => {
+        if (r.status === "rejected") {
+          const resp = (r as any).reason?.response?.data || {};
+          apiErrs[measures[i].id] =
+            resp.reading_value?.[0] ||
+            resp.non_field_errors?.[0] ||
+            resp.detail ||
+            "Save failed";
+        }
+      });
+      setErrors(apiErrs);
 
-      const fails = results.filter((r) => r.status === "rejected");
+      const ok = results.filter((r) => r.status === "fulfilled") as
+        | PromiseFulfilledResult<{
+            id: number;
+            measure: number;
+            reading_value: string;
+            created_at: string;
+          }>[];
+
+      const fails = Object.keys(apiErrs).length;
 
       if (ok.length) {
         const latestISO = ok
@@ -160,22 +200,26 @@ const MultiReadingModal: React.FC<{
           .slice(-1)[0];
         showToast(
           `Saved ${ok.length}/${measures.length} readings${
-            fails.length ? ` (${fails.length} failed)` : ""
+            fails ? ` (${fails} failed)` : ""
           }`,
-          fails.length ? "warning" : "success"
+          fails ? "warning" : "success"
         );
         onSaved?.(latestISO);
       } else {
         showToast("No readings were saved.", "error");
       }
 
-      if (!fails.length) onClose();
+      if (!fails) onClose();
     } catch (e: any) {
       showToast(e?.response?.data?.detail || "Save failed", "error");
     } finally {
       setSaving(false);
     }
   };
+
+  const hasAnyError = Object.keys(errors).length > 0;
+  const hasEmpty = measures.some((m) => (values[m.id] ?? "").trim() === "");
+  const canSave = !saving && measures.length > 0 && !hasAnyError && !hasEmpty;
 
   if (!isOpen) return null;
 
@@ -224,8 +268,8 @@ const MultiReadingModal: React.FC<{
               <div className="grid grid-cols-1 gap-4">
                 {measures.map((m) => {
                   const err = errors[m.id];
-                  const min = m.min_value ?? "";
-                  const max = m.max_value ?? "";
+                  const min = nOrUndef(m.min_value);
+                  const max = nOrUndef(m.max_value);
                   return (
                     <div
                       key={m.id}
@@ -249,24 +293,23 @@ const MultiReadingModal: React.FC<{
                             ) : null}
                           </div>
                           <div className="text-xs text-gray-500 mt-1">
-                            {min !== "" ? `Min ${min}` : "Min —"} ·{" "}
-                            {max !== "" ? `Max ${max}` : "Max —"}{" "}
+                            {min !== undefined ? `Min ${min}` : "Min —"} ·{" "}
+                            {max !== undefined ? `Max ${max}` : "Max —"}{" "}
                             {m.alert_below ? `· Alert < ${m.alert_below}` : ""}{" "}
                             {m.alert_above ? `· Alert > ${m.alert_above}` : ""}
                             {m.multiplier ? ` · x${m.multiplier}` : ""}
                           </div>
                         </div>
-                        <div className="w-40">
+                        <div className="w-44">
                           <input
                             type="number"
+                            inputMode="decimal"
                             step="any"
+                            min={min}
+                            max={max}
                             value={values[m.id] ?? ""}
-                            onChange={(e) =>
-                              setValues((s) => ({
-                                ...s,
-                                [m.id]: e.target.value,
-                              }))
-                            }
+                            onChange={(e) => handleChange(m, e.target.value)}
+                            onBlur={() => handleBlur(m)}
                             className={`w-full px-3 py-2 rounded border focus:outline-none focus:ring-2 ${
                               err
                                 ? "border-red-300 focus:ring-red-300"
@@ -298,7 +341,10 @@ const MultiReadingModal: React.FC<{
                 <button
                   onClick={handleSave}
                   className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-2"
-                  disabled={saving || measures.length === 0}
+                  disabled={!canSave}
+                  title={
+                    !canSave ? "Enter valid values within min/max first" : ""
+                  }
                 >
                   {saving ? "Saving…" : "Save Readings"}
                 </button>
@@ -311,7 +357,7 @@ const MultiReadingModal: React.FC<{
   );
 };
 
-/** ───────────────────────────────── AssetDetails page ───────────────────────────────── */
+
 const InfoCard: React.FC<{
   label: string;
   value: any;
